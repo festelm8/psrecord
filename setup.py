@@ -44,7 +44,7 @@ setup(name='psrecord',
       packages=['psrecord', 'psrecord.tests'],
       provides=['psrecord'],
       scripts=['scripts/psrecord'],
-      install_requires=['psutil>=2'],
+      install_requires=['psutil>=2','psycopg2-binary>=2','SQLAlchemy>=1.3'],
       cmdclass={'build_py': build_py},
       classifiers=[
                    "Development Status :: 3 - Alpha",

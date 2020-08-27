@@ -28,9 +28,24 @@ from __future__ import (unicode_literals, division, print_function,
 
 import time
 import argparse
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy import Float, Column, Integer, String, Sequence
 
 children = []
 
+Base = declarative_base()
+class QueueData(Base):
+    __tablename__ = 'QUEUE_DATA'
+
+    id = Column(Integer, Sequence('table_id_seq', metadata=Base.metadata, start=1), primary_key=True, unique=True)
+    pid = Column(Integer)
+    operation_type = Column(String(36))
+    data_type = Column(String(36))
+    time = Column(Float)
+    value = Column(Float)
+    experiment_id = Column(Integer)
 
 def get_percent(process):
     return process.cpu_percent()
@@ -67,8 +82,11 @@ def main():
     parser.add_argument('--log', type=str,
                         help='output the statistics to a file')
 
-    parser.add_argument('--plot', type=str,
-                        help='output the statistics to a plot')
+    parser.add_argument('--pg-db-uri', type=str,
+                        help='output the statistics to a psql')
+
+    # parser.add_argument('--plot', type=str,
+    #                     help='output the statistics to a plot')
 
     parser.add_argument('--duration', type=float,
                         help='how long to record for (in seconds). If not '
@@ -85,6 +103,9 @@ def main():
                              'in a slower maximum sampling rate).',
                         action='store_true')
 
+    parser.add_argument('--pname', type=str,
+                        help='how name of tracking process')
+
     args = parser.parse_args()
 
     # Attach to process
@@ -100,15 +121,16 @@ def main():
         sprocess = subprocess.Popen(command, shell=True)
         pid = sprocess.pid
 
-    monitor(pid, logfile=args.log, plot=args.plot, duration=args.duration,
-            interval=args.interval, include_children=args.include_children)
+    monitor(pid, logfile=args.log, plot=None, duration=args.duration,
+            interval=args.interval, include_children=args.include_children,
+            pg_db_uri=args.pg_db_uri, pname=args.pname)
 
     if sprocess is not None:
         sprocess.kill()
 
 
 def monitor(pid, logfile=None, plot=None, duration=None, interval=None,
-            include_children=False):
+            include_children=False, pg_db_uri=None, pname=None):
 
     # We import psutil here so that the module can be imported even if psutil
     # is not present (for example if accessing the version)
@@ -118,6 +140,18 @@ def monitor(pid, logfile=None, plot=None, duration=None, interval=None,
 
     # Record start time
     start_time = time.time()
+
+    tracked_process_name = pname if pname is not None else "Process "+str(pid)
+
+    if pg_db_uri:
+        try:
+            engine = create_engine(pg_db_uri)
+        except Exception:
+            print("Bad psql db URI")
+            return
+
+        Session = sessionmaker(bind=engine)
+        dbsession = Session()
 
     if logfile:
         f = open(logfile, 'w')
@@ -179,6 +213,35 @@ def monitor(pid, logfile=None, plot=None, duration=None, interval=None,
                     current_mem_real += current_mem.rss / 1024. ** 2
                     current_mem_virtual += current_mem.vms / 1024. ** 2
 
+            if pg_db_uri:
+                new_cpu_entry = QueueData(
+                    pid = pid,
+                    operation_type=tracked_process_name,
+                    data_type = "CPU_USAGE",
+                    time = current_time,
+                    value = current_cpu,
+                    experiment_id = 0
+                )
+                new_mem_real_entry = QueueData(
+                    pid = pid,
+                    operation_type=tracked_process_name,
+                    data_type = "MEMORY_MB_REAL",
+                    time = current_time,
+                    value = current_mem_real,
+                    experiment_id = 0
+                )
+                new_mem_virt_entry = QueueData(
+                    pid = pid,
+                    operation_type=tracked_process_name,
+                    data_type = "MEMORY_MB_VIRTUAL",
+                    time = current_time,
+                    value = current_mem_virtual,
+                    experiment_id = 0
+                )
+
+                dbsession.add_all([new_cpu_entry, new_mem_real_entry, new_mem_virt_entry])
+                dbsession.commit()
+
             if logfile:
                 f.write("{0:12.3f} {1:12.3f} {2:12.3f} {3:12.3f}\n".format(
                     current_time - start_time,
@@ -228,3 +291,6 @@ def monitor(pid, logfile=None, plot=None, duration=None, interval=None,
             ax.grid()
 
             fig.savefig(plot)
+
+# if __name__ == '__main__':
+#     main()
