@@ -28,6 +28,7 @@ from __future__ import (unicode_literals, division, print_function,
 
 import time
 import argparse
+import threading
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -108,25 +109,29 @@ def main():
 
     args = parser.parse_args()
 
+    pids = args.process_id_or_command.split(',')
+    for target_pid in pids:
+        x = threading.Thread(target=pid_handler, args=(target_pid, args))
+        x.start()
+
+    try:
+        while True:
+            pass
+    except KeyboardInterrupt:
+        print("\nStoppping...")
+
+
+def pid_handler(process_id_or_command, args):
     # Attach to process
     try:
-        pid = int(args.process_id_or_command)
+        pid = int(process_id_or_command)
         print("Attaching to process {0}".format(pid))
-        sprocess = None
     except Exception:
-        import subprocess
-        command = args.process_id_or_command
-        print("Starting up command '{0}' and attaching to process"
-              .format(command))
-        sprocess = subprocess.Popen(command, shell=True)
-        pid = sprocess.pid
+        print("PID '{0}' handling problem".format(process_id_or_command))
 
     monitor(pid, logfile=args.log, plot=None, duration=args.duration,
             interval=args.interval, include_children=args.include_children,
             pg_db_uri=args.pg_db_uri, pname=args.pname)
-
-    if sprocess is not None:
-        sprocess.kill()
 
 
 def monitor(pid, logfile=None, plot=None, duration=None, interval=None,
@@ -168,100 +173,95 @@ def monitor(pid, logfile=None, plot=None, duration=None, interval=None,
     log['mem_real'] = []
     log['mem_virtual'] = []
 
-    try:
+    # Start main event loop
+    while True:
 
-        # Start main event loop
-        while True:
+        # Find current time
+        current_time = time.time()
 
-            # Find current time
-            current_time = time.time()
+        try:
+            pr_status = pr.status()
+        except TypeError:  # psutil < 2.0
+            pr_status = pr.status
+        except psutil.NoSuchProcess:  # pragma: no cover
+            break
 
-            try:
-                pr_status = pr.status()
-            except TypeError:  # psutil < 2.0
-                pr_status = pr.status
-            except psutil.NoSuchProcess:  # pragma: no cover
-                break
+        # Check if process status indicates we should exit
+        if pr_status in [psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD]:
+            print("Process finished ({0:.2f} seconds)"
+                  .format(current_time - start_time))
+            break
 
-            # Check if process status indicates we should exit
-            if pr_status in [psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD]:
-                print("Process finished ({0:.2f} seconds)"
-                      .format(current_time - start_time))
-                break
+        # Check if we have reached the maximum time
+        if duration is not None and current_time - start_time > duration:
+            break
 
-            # Check if we have reached the maximum time
-            if duration is not None and current_time - start_time > duration:
-                break
+        # Get current CPU and memory
+        try:
+            current_cpu = get_percent(pr)
+            current_mem = get_memory(pr)
+        except Exception:
+            break
+        current_mem_real = current_mem.rss / 1024. ** 2
+        current_mem_virtual = current_mem.vms / 1024. ** 2
 
-            # Get current CPU and memory
-            try:
-                current_cpu = get_percent(pr)
-                current_mem = get_memory(pr)
-            except Exception:
-                break
-            current_mem_real = current_mem.rss / 1024. ** 2
-            current_mem_virtual = current_mem.vms / 1024. ** 2
+        # Get information for children
+        if include_children:
+            for child in all_children(pr):
+                try:
+                    current_cpu += get_percent(child)
+                    current_mem = get_memory(child)
+                except Exception:
+                    continue
+                current_mem_real += current_mem.rss / 1024. ** 2
+                current_mem_virtual += current_mem.vms / 1024. ** 2
 
-            # Get information for children
-            if include_children:
-                for child in all_children(pr):
-                    try:
-                        current_cpu += get_percent(child)
-                        current_mem = get_memory(child)
-                    except Exception:
-                        continue
-                    current_mem_real += current_mem.rss / 1024. ** 2
-                    current_mem_virtual += current_mem.vms / 1024. ** 2
+        if pg_db_uri:
+            new_cpu_entry = QueueData(
+                pid = pid,
+                operation_type=tracked_process_name,
+                data_type = "CPU_USAGE",
+                time = current_time,
+                value = current_cpu,
+                experiment_id = 0
+            )
+            new_mem_real_entry = QueueData(
+                pid = pid,
+                operation_type=tracked_process_name,
+                data_type = "MEMORY_MB_REAL",
+                time = current_time,
+                value = current_mem_real,
+                experiment_id = 0
+            )
+            new_mem_virt_entry = QueueData(
+                pid = pid,
+                operation_type=tracked_process_name,
+                data_type = "MEMORY_MB_VIRTUAL",
+                time = current_time,
+                value = current_mem_virtual,
+                experiment_id = 0
+            )
 
-            if pg_db_uri:
-                new_cpu_entry = QueueData(
-                    pid = pid,
-                    operation_type=tracked_process_name,
-                    data_type = "CPU_USAGE",
-                    time = current_time,
-                    value = current_cpu,
-                    experiment_id = 0
-                )
-                new_mem_real_entry = QueueData(
-                    pid = pid,
-                    operation_type=tracked_process_name,
-                    data_type = "MEMORY_MB_REAL",
-                    time = current_time,
-                    value = current_mem_real,
-                    experiment_id = 0
-                )
-                new_mem_virt_entry = QueueData(
-                    pid = pid,
-                    operation_type=tracked_process_name,
-                    data_type = "MEMORY_MB_VIRTUAL",
-                    time = current_time,
-                    value = current_mem_virtual,
-                    experiment_id = 0
-                )
+            dbsession.add_all([new_cpu_entry, new_mem_real_entry, new_mem_virt_entry])
+            dbsession.commit()
 
-                dbsession.add_all([new_cpu_entry, new_mem_real_entry, new_mem_virt_entry])
-                dbsession.commit()
+        if logfile:
+            f.write("{0:12.3f} {1:12.3f} {2:12.3f} {3:12.3f}\n".format(
+                current_time - start_time,
+                current_cpu,
+                current_mem_real,
+                current_mem_virtual))
+            f.flush()
 
-            if logfile:
-                f.write("{0:12.3f} {1:12.3f} {2:12.3f} {3:12.3f}\n".format(
-                    current_time - start_time,
-                    current_cpu,
-                    current_mem_real,
-                    current_mem_virtual))
-                f.flush()
+        if interval is not None:
+            time.sleep(interval)
 
-            if interval is not None:
-                time.sleep(interval)
-
-            # If plotting, record the values
-            if plot:
-                log['times'].append(current_time - start_time)
-                log['cpu'].append(current_cpu)
-                log['mem_real'].append(current_mem_real)
-                log['mem_virtual'].append(current_mem_virtual)
-
-    except KeyboardInterrupt:  # pragma: no cover
-        pass
+        # If plotting, record the values
+        if plot:
+            log['times'].append(current_time - start_time)
+            log['cpu'].append(current_cpu)
+            log['mem_real'].append(current_mem_real)
+            log['mem_virtual'].append(current_mem_virtual)
 
     if logfile:
         f.close()
@@ -292,5 +292,5 @@ def monitor(pid, logfile=None, plot=None, duration=None, interval=None,
 
             fig.savefig(plot)
 
-# if __name__ == '__main__':
-#     main()
+if __name__ == '__main__':
+    main()
