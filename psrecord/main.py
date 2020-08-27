@@ -109,16 +109,25 @@ def main():
 
     args = parser.parse_args()
 
+    threads = []
     pids = args.process_id_or_command.split(',')
     for target_pid in pids:
         x = threading.Thread(target=pid_handler, args=(target_pid, args))
         x.start()
+        threads.append(x)
 
+    stop = False
     try:
-        while True:
-            pass
+        while not stop:
+            time.sleep(1)
+            for x in threads:
+                if not x.is_alive():
+                    stop = True
+                    break
     except KeyboardInterrupt:
-        print("\nStoppping...")
+        pass
+
+    print("\nStoppping...")
 
 
 def pid_handler(process_id_or_command, args):
@@ -128,6 +137,7 @@ def pid_handler(process_id_or_command, args):
         print("Attaching to process {0}".format(pid))
     except Exception:
         print("PID '{0}' handling problem".format(process_id_or_command))
+        return
 
     monitor(pid, logfile=args.log, plot=None, duration=args.duration,
             interval=args.interval, include_children=args.include_children,
@@ -141,7 +151,11 @@ def monitor(pid, logfile=None, plot=None, duration=None, interval=None,
     # is not present (for example if accessing the version)
     import psutil
 
-    pr = psutil.Process(pid)
+    try:
+        pr = psutil.Process(pid)
+    except Exception:
+        print("No process found with pid ", pid)
+        return
 
     # Record start time
     start_time = time.time()
@@ -159,7 +173,8 @@ def monitor(pid, logfile=None, plot=None, duration=None, interval=None,
         dbsession = Session()
 
     if logfile:
-        f = open(logfile, 'w')
+        logfile_name = logfile+str(pid)
+        f = open(logfile_name, 'w')
         f.write("# {0:12s} {1:12s} {2:12s} {3:12s}\n".format(
             'Elapsed time'.center(12),
             'CPU (%)'.center(12),
@@ -267,7 +282,6 @@ def monitor(pid, logfile=None, plot=None, duration=None, interval=None,
         f.close()
 
     if plot:
-
         # Use non-interactive backend, to enable operation on headless machines
         import matplotlib.pyplot as plt
         with plt.rc_context({'backend': 'Agg'}):
@@ -292,5 +306,5 @@ def monitor(pid, logfile=None, plot=None, duration=None, interval=None,
 
             fig.savefig(plot)
 
-if __name__ == '__main__':
-    main()
+# if __name__ == '__main__':
+#     main()
