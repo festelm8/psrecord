@@ -121,7 +121,7 @@ def main():
     try:
         while not stop:
             time.sleep(2)
-            for thread_id in threads.keys:
+            for thread_id in threads.keys():
                 if not threads[thread_id].is_alive():
                     del threads[thread_id]
 
