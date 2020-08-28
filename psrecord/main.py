@@ -130,9 +130,11 @@ def main():
             if threads_to_delete:
                 for x in threads_to_delete:
                     del threads[x]
+                    print("Stop working with ", x, " with inactivity reason")
                 threads_to_delete = []
 
             if not threads:
+                print("All theads are dead")
                 stop = True
 
     except KeyboardInterrupt:
