@@ -110,13 +110,14 @@ def main():
     args = parser.parse_args()
 
     threads = []
+    stop = False
+
     pids = args.process_id_or_command.split(',')
     for target_pid in pids:
-        x = threading.Thread(target=pid_handler, args=(target_pid, args))
+        x = threading.Thread(target=pid_handler, args=(target_pid, lambda : stop, args))
         x.start()
         threads.append(x)
 
-    stop = False
     try:
         while not stop:
             time.sleep(1)
@@ -125,26 +126,26 @@ def main():
                     stop = True
                     break
     except KeyboardInterrupt:
-        pass
+        stop = True
 
     print("\nStoppping...")
 
 
-def pid_handler(process_id_or_command, args):
+def pid_handler(target_pid, stop, args):
     # Attach to process
     try:
-        pid = int(process_id_or_command)
+        pid = int(target_pid)
         print("Attaching to process {0}".format(pid))
     except Exception:
-        print("PID '{0}' handling problem".format(process_id_or_command))
+        print("PID '{0}' handling problem".format(target_pid))
         return
 
-    monitor(pid, logfile=args.log, plot=None, duration=args.duration,
+    monitor(pid, stop, logfile=args.log, plot=None, duration=args.duration,
             interval=args.interval, include_children=args.include_children,
             pg_db_uri=args.pg_db_uri, pname=args.pname)
 
 
-def monitor(pid, logfile=None, plot=None, duration=None, interval=None,
+def monitor(pid, stop, logfile=None, plot=None, duration=None, interval=None,
             include_children=False, pg_db_uri=None, pname=None):
 
     # We import psutil here so that the module can be imported even if psutil
@@ -188,8 +189,10 @@ def monitor(pid, logfile=None, plot=None, duration=None, interval=None,
     log['mem_real'] = []
     log['mem_virtual'] = []
 
+    print("Working with process {0}".format(pid))
+
     # Start main event loop
-    while True:
+    while not stop():
 
         # Find current time
         current_time = time.time()
