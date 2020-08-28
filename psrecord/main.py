@@ -109,22 +109,25 @@ def main():
 
     args = parser.parse_args()
 
-    threads = []
+    threads = {}
     stop = False
 
     pids = args.process_id_or_command.split(',')
     for target_pid in pids:
         x = threading.Thread(target=pid_handler, args=(target_pid, lambda : stop, args))
         x.start()
-        threads.append(x)
+        threads[target_pid] = x
 
     try:
         while not stop:
-            time.sleep(1)
-            for x in threads:
-                if not x.is_alive():
-                    stop = True
-                    break
+            time.sleep(2)
+            for thread_id in threads.keys:
+                if not threads[thread_id].is_alive():
+                    del threads[thread_id]
+
+            if not threads:
+                stop = True
+
     except KeyboardInterrupt:
         stop = True
 
