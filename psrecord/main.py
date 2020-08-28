@@ -145,7 +145,7 @@ def pid_handler(target_pid, stop, args):
             pg_db_uri=args.pg_db_uri, pname=args.pname)
 
 
-def monitor(pid, stop, logfile=None, plot=None, duration=None, interval=None,
+def monitor(pid, stop, logfile=None, plot=None, duration=None, interval=5,
             include_children=False, pg_db_uri=None, pname=None):
 
     # We import psutil here so that the module can be imported even if psutil
@@ -220,8 +220,8 @@ def monitor(pid, stop, logfile=None, plot=None, duration=None, interval=None,
             current_mem = get_memory(pr)
         except Exception:
             break
-        current_mem_real = current_mem.rss / 1024. ** 2
-        current_mem_virtual = current_mem.vms / 1024. ** 2
+        current_mem_real = current_mem.rss / 1024.
+        current_mem_virtual = current_mem.vms / 1024.
 
         # Get information for children
         if include_children:
@@ -231,8 +231,8 @@ def monitor(pid, stop, logfile=None, plot=None, duration=None, interval=None,
                     current_mem = get_memory(child)
                 except Exception:
                     continue
-                current_mem_real += current_mem.rss / 1024. ** 2
-                current_mem_virtual += current_mem.vms / 1024. ** 2
+                current_mem_real += current_mem.rss / 1024.
+                current_mem_virtual += current_mem.vms / 1024.
 
         if pg_db_uri:
             new_cpu_entry = QueueData(
@@ -246,7 +246,7 @@ def monitor(pid, stop, logfile=None, plot=None, duration=None, interval=None,
             new_mem_real_entry = QueueData(
                 pid = pid,
                 operation_type=tracked_process_name,
-                data_type = "MEMORY_MB_REAL",
+                data_type = "MEMORY_KB_REAL",
                 time = current_time,
                 value = current_mem_real,
                 experiment_id = 0
@@ -254,7 +254,7 @@ def monitor(pid, stop, logfile=None, plot=None, duration=None, interval=None,
             new_mem_virt_entry = QueueData(
                 pid = pid,
                 operation_type=tracked_process_name,
-                data_type = "MEMORY_MB_VIRTUAL",
+                data_type = "MEMORY_KB_VIRTUAL",
                 time = current_time,
                 value = current_mem_virtual,
                 experiment_id = 0
