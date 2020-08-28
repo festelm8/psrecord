@@ -110,6 +110,7 @@ def main():
     args = parser.parse_args()
 
     threads = {}
+    threads_to_delete = []
     stop = False
 
     pids = args.process_id_or_command.split(',')
@@ -121,9 +122,15 @@ def main():
     try:
         while not stop:
             time.sleep(2)
+
             for thread_id in threads.keys():
                 if not threads[thread_id].is_alive():
-                    del threads[thread_id]
+                    threads_to_delete.append(thread_id)
+
+            if threads_to_delete:
+                for x in threads_to_delete:
+                    del threads[x]
+                threads_to_delete = []
 
             if not threads:
                 stop = True
