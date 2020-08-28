@@ -109,19 +109,41 @@ def main():
 
     args = parser.parse_args()
 
+    if args.pg_db_uri:
+        try:
+            engine = create_engine(args.pg_db_uri)
+        except Exception:
+            print("Bad psql db URI")
+            return
+
+        Session = sessionmaker(bind=engine)
+        dbsession = Session()
+    else:
+        dbsession = None
+
+    if args.duration:
+        commit_delay = int(args.duration)+2
+    else:
+        commit_delay = 7
+
     threads = {}
     threads_to_delete = []
     stop = False
+    pivot = time.time()
 
     pids = args.process_id_or_command.split(',')
     for target_pid in pids:
-        x = threading.Thread(target=pid_handler, args=(target_pid, lambda : stop, args))
+        x = threading.Thread(target=pid_handler, args=(target_pid, lambda:stop, dbsession, args))
         x.start()
         threads[target_pid] = x
 
     try:
         while not stop:
             time.sleep(2)
+
+            if pivot - time.time() < commit_delay:
+                pivot = time.time()
+                dbsession.commit()
 
             for thread_id in threads.keys():
                 if not threads[thread_id].is_alive():
@@ -143,7 +165,7 @@ def main():
     print("\nStoppping...")
 
 
-def pid_handler(target_pid, stop, args):
+def pid_handler(target_pid, stop, dbsession, args):
     # Attach to process
     try:
         pid = int(target_pid)
@@ -152,13 +174,14 @@ def pid_handler(target_pid, stop, args):
         print("PID '{0}' handling problem".format(target_pid))
         return
 
-    monitor(pid, stop, logfile=args.log, plot=None, duration=args.duration,
-            interval=args.interval, include_children=args.include_children,
-            pg_db_uri=args.pg_db_uri, pname=args.pname)
+    monitor(pid, stop, dbsession,
+            logfile=args.log, plot=None, duration=args.duration,
+            interval=args.interval, include_children=args.include_children, pname=args.pname)
 
 
-def monitor(pid, stop, logfile=None, plot=None, duration=None, interval=5,
-            include_children=False, pg_db_uri=None, pname=None):
+def monitor(pid, stop, dbsession,
+            logfile=None, plot=None, duration=None, interval=5,
+            include_children=False, pname=None):
 
     # We import psutil here so that the module can be imported even if psutil
     # is not present (for example if accessing the version)
@@ -174,16 +197,6 @@ def monitor(pid, stop, logfile=None, plot=None, duration=None, interval=5,
     start_time = time.time()
 
     tracked_process_name = pname if pname is not None else "Process "+str(pid)
-
-    if pg_db_uri:
-        try:
-            engine = create_engine(pg_db_uri)
-        except Exception:
-            print("Bad psql db URI")
-            return
-
-        Session = sessionmaker(bind=engine)
-        dbsession = Session()
 
     if logfile:
         logfile_name = logfile+str(pid)
@@ -246,7 +259,7 @@ def monitor(pid, stop, logfile=None, plot=None, duration=None, interval=5,
                 current_mem_real += current_mem.rss / 1024.
                 current_mem_virtual += current_mem.vms / 1024.
 
-        if pg_db_uri:
+        if dbsession is not None:
             new_cpu_entry = QueueData(
                 pid = pid,
                 operation_type=tracked_process_name,
@@ -273,7 +286,6 @@ def monitor(pid, stop, logfile=None, plot=None, duration=None, interval=5,
             )
 
             dbsession.add_all([new_cpu_entry, new_mem_real_entry, new_mem_virt_entry])
-            dbsession.commit()
 
         if logfile:
             f.write("{0:12.3f} {1:12.3f} {2:12.3f} {3:12.3f}\n".format(
